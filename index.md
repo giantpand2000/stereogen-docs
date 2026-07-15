@@ -9,6 +9,7 @@ permalink: /
 StereoGen creates single-image stereograms from a depth map and a texture.
 Image processing happens locally on your computer; no account is required.
 
+- [Get StereoGen from Microsoft Store](https://apps.microsoft.com/detail/9N7Q261JQW8C)
 - [English user guide]({{ site.baseurl }}/guide/en-US/)
 - [简体中文用户指南]({{ site.baseurl }}/guide/zh-CN/)
 - [Privacy policy]({{ site.baseurl }}/privacy-policy/)
@@ -26,4 +27,3 @@ The repository includes three sample images for learning and testing:
 When reporting a problem, include the StereoGen version, Windows version, render
 algorithm, input image formats and dimensions, and the exact error message. Do
 not attach private source images unless you intend to share them.
-

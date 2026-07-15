@@ -19,7 +19,7 @@ images or results to the developer's servers.
 ## System requirements and installation
 
 - Windows 10 or Windows 11.
-- Installation from Microsoft Store is recommended for signed installation and updates.
+- [Installation from Microsoft Store](https://apps.microsoft.com/detail/9N7Q261JQW8C) is recommended for signed installation and updates.
 - The interface uses the system Microsoft WebView2 runtime. Windows 11 normally includes it; follow the Microsoft prompt if installation or an update is required.
 
 After installation, open **StereoGen** from the Start menu.
