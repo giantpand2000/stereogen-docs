@@ -1,0 +1,14 @@
+title: StereoGen Documentation
+description: User guides and public information for StereoGen
+theme: minima
+markdown: kramdown
+lang: en
+
+header_pages:
+  - index.md
+  - user-guide.en-US.md
+  - user-guide.zh-CN.md
+  - privacy-policy.md
+
+exclude:
+  - README.md
