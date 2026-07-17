@@ -104,6 +104,8 @@ forcing focus for long periods. Stop and rest if you experience eye discomfort.
 - **Stretch / Tile** controls how the texture covers the output.
 - **Use texture size** uses texture width as the repeat size and disables manual Parallax.
 - **Depth factor** controls the amount of depth displacement. Lower values are easier to view.
+- **Depth mapping** selects the original StereoGen linear curve or a perspective convex curve, which allocates less change to far depths and more detail to near depths.
+- **Curve k** applies only to the perspective curve. Smaller `k` produces more curvature; larger `k` approaches the linear mapping.
 - **Texture start** positions the texture at the start of the Modern repeat cycle.
 - **Interpolate** smooths image sampling and is normally left enabled.
 - **Remove echo ghosting** reduces repeated silhouette artifacts.
@@ -112,6 +114,52 @@ forcing focus for long periods. Stop and rest if you experience eye discomfort.
 
 Use **Reset to defaults** to restore render settings. Options are stored locally
 in the application configuration directory for the next launch.
+
+### Parallax, Depth factor, and S
+
+StereoGen uses `S` for the **maximum pixel displacement** from the far endpoint
+to the near endpoint. In other words, `S = far separation - near separation`.
+It is not Parallax `P` itself; it is calculated from Parallax and Depth factor:
+
+```text
+P = Parallax in pixels; it is also far separation
+f = Depth factor as displayed in the UI, for example 35
+F = f / 100, so 35% → 0.35
+
+S               = (P - 1) × F
+far separation  = P
+near separation = P - S
+```
+
+When **Use texture size** is enabled, `P` in these formulas is the texture
+width rather than the disabled manual Parallax value.
+
+For example, with `P = 100 px` and Depth factor `35%`:
+
+```text
+S               = (100 - 1) × 0.35 = 34.65 px
+far separation  = 100 px
+near separation = 100 - 34.65 = 65.35 px
+```
+
+The `1` in `P - 1` is part of the original StereoGen formula. Consequently,
+even a 100% Depth factor leaves a `1 px` near separation instead of reducing it
+to zero. The calculation may produce fractional pixels; sampling and interpolation
+handle them during generation.
+
+For a normalized depth-map value `t` (`0` for far/black and `1` for near/white),
+the linear mapping is:
+
+```text
+current displacement s(t) = t × S
+current separation D(t)   = P - s(t) = P - t × S
+```
+
+The perspective convex curve uses the same `S`, so its endpoints remain `P`
+and `P - S`. The `k` parameter only redistributes intermediate depths between
+those endpoints: changing `k` changes the displacement assigned to mid-gray
+values, not the maximum depth range. Diverging and Converging modes reverse the
+scanline displacement direction but do not change the magnitude of `S`.
 
 ## Mapped Texture mode
 
