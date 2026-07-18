@@ -12,6 +12,7 @@ Image processing happens locally on your computer; no account is required.
 - [Get StereoGen from Microsoft Store](https://apps.microsoft.com/detail/9N7Q261JQW8C)
 - [English user guide]({{ site.baseurl }}/guide/en-US/)
 - [简体中文用户指南]({{ site.baseurl }}/guide/zh-CN/)
+- [带轮廓的三维立体图简易教程]({{ site.baseurl }}/tutorials/outline-stereogram/)
 - [Privacy policy]({{ site.baseurl }}/privacy-policy/)
 
 ## Test images

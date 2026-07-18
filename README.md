@@ -5,6 +5,7 @@ information, screenshots, and test images.
 
 - [English user guide](user-guide.en-US.md)
 - [简体中文用户指南](user-guide.zh-CN.md)
+- [带轮廓的三维立体图简易教程](tutorial-outline.zh-CN.md)
 - [Privacy policy](privacy-policy.md)
 - [Test images](test-assets/)
 
@@ -21,6 +22,8 @@ Copyright © 2026 Lan Fan. All rights reserved.
 - `index.md` — website landing page
 - `user-guide.en-US.md` — English user guide
 - `user-guide.zh-CN.md` — Simplified Chinese user guide
+- `tutorial-outline.zh-CN.md` — outline-stereogram tutorial in Simplified Chinese
+- `tutorials/outline/` — tutorial script, source images, results, and screenshots
 - `privacy-policy.md` — public privacy statement
 - `store-listing/` — customer-visible Microsoft Store screenshots
 - `test-assets/` — sample images for learning and certification testing
