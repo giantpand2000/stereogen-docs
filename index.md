@@ -13,6 +13,7 @@ Image processing happens locally on your computer; no account is required.
 - [English user guide]({{ site.baseurl }}/guide/en-US/)
 - [简体中文用户指南]({{ site.baseurl }}/guide/zh-CN/)
 - [带轮廓的三维立体图简易教程]({{ site.baseurl }}/tutorials/outline-stereogram/)
+- [带皮肤的三维立体图简易教程]({{ site.baseurl }}/tutorials/skinned-stereogram/)
 - [Privacy policy]({{ site.baseurl }}/privacy-policy/)
 
 ## Test images

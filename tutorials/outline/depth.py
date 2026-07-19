@@ -36,30 +36,44 @@ def get_desktop_dir():
 # 可调参数
 # =========================
 
-# 输出目录和文件名前缀。
+# 1. 执行开关
+# True：运行脚本后立即渲染并写出启用的 PNG；False：只配置场景和合成节点。
+RENDER_NOW = False
+
+# 2. 输出开关
+# 每项可以独立启用。描边、原材质和纯色填充固定使用透明背景 RGBA。
+EXPORT_DEPTH = True
+EXPORT_OUTLINE = True
+EXPORT_MATERIAL = True
+EXPORT_OBJECT_FILL = True
+
+# 3. 输出位置和文件名前缀
 OUTPUT_DIR = get_desktop_dir()
 DEPTH_OUTPUT_NAME = "blender_depth"
 OUTLINE_OUTPUT_NAME = "blender_outline"
+MATERIAL_OUTPUT_NAME = "blender_material"
+OBJECT_FILL_OUTPUT_NAME = "blender_object_fill"
 
-# True：脚本最后直接渲染并写出 File Output 节点；False：只建立节点和设置场景。
-RENDER_NOW = False
+# 脚本内部使用的输出视图层名称，通常无需修改。
+MATERIAL_VIEW_LAYER_NAME = "StereogramOriginalMaterial"
+OBJECT_FILL_VIEW_LAYER_NAME = "StereogramObjectFill"
 
-# 渲染分辨率。
+# 4. 渲染分辨率
 RESOLUTION_X = 1920
 RESOLUTION_Y = 1080
 RESOLUTION_PERCENTAGE = 100
 
-# 描边设置。
-OUTLINE_ONLY = True  # True：只输出 Freestyle 边线，不输出物体填充。
+# 5. 描边设置
+# 描边图始终只包含线条；抗锯齿通过 Alpha 从描边色过渡到透明。
 OUTLINE_COLOR = (0.0, 0.0, 0.0)  # Freestyle 边线颜色，RGB，范围 0.0 - 1.0。
 OUTLINE_THICKNESS = 2.0
 OUTLINE_THICKNESS_POSITION = "INSIDE"  # INSIDE：内描边，避免轮廓超出深度图覆盖范围。
 
-# 如果你需要“彩色填充+线”的普通渲染图，把 OUTLINE_ONLY 改成 False，
-# 再打开 RENDER_OBJECT_FILL 并调整 OBJECT_FILL_COLOR。脚本会用视图层材质覆盖，
-# 不会直接改掉物体自身的材质槽。
-RENDER_OBJECT_FILL = False
-OBJECT_FILL_COLOR = (1.0, 1.0, 1.0, 1.0)  # 物体填充色，RGBA，只有 RENDER_OBJECT_FILL=True 时使用。
+# 6. 纯色填充设置
+OBJECT_FILL_COLOR = (1.0, 1.0, 1.0, 1.0)  # RGBA；背景始终透明。
+
+# 7. 环境和相机设置
+# World 背景仍参与照明，但不会画进描边、原材质或纯色填充图。
 WORLD_BACKGROUND_COLOR = (1.0, 1.0, 1.0, 1.0)
 
 # 投影模式：
@@ -92,10 +106,41 @@ def make_emission_material(name, color):
     return mat
 
 
-def set_view_layer_material_override(mat):
-    """用视图层材质覆盖渲染颜色，避免直接修改物体原材质。"""
-    view_layer = bpy.context.scene.view_layers["ViewLayer"]
-    view_layer.material_override = mat
+def sync_layer_collection_settings(source, target):
+    """同步视图层集合的可见性设置，让原材质图与主视图层包含相同物体。"""
+    for attribute in ("exclude", "holdout", "indirect_only", "hide_viewport"):
+        if hasattr(source, attribute) and hasattr(target, attribute):
+            setattr(target, attribute, getattr(source, attribute))
+
+    target_children = {child.name: child for child in target.children}
+    for source_child in source.children:
+        target_child = target_children.get(source_child.name)
+        if target_child is not None:
+            sync_layer_collection_settings(source_child, target_child)
+
+
+def configure_output_view_layer(
+    scene,
+    source_view_layer,
+    view_layer_name,
+    material_override,
+):
+    """配置一个同步主视图层可见性、不带 Freestyle 的输出视图层。"""
+    view_layer = scene.view_layers.get(view_layer_name)
+    if view_layer is None:
+        view_layer = scene.view_layers.new(view_layer_name)
+
+    if hasattr(view_layer, "use"):
+        view_layer.use = True
+    view_layer.material_override = material_override
+    if hasattr(view_layer, "use_freestyle"):
+        view_layer.use_freestyle = False
+
+    sync_layer_collection_settings(
+        source_view_layer.layer_collection,
+        view_layer.layer_collection,
+    )
+    return view_layer
 
 
 def configure_camera(camera):
@@ -129,11 +174,10 @@ def configure_camera(camera):
         raise ValueError("PROJECTION_MODE 只能是 ORTHO、PERSP 或 HALF_PERSP")
 
 
-def configure_freestyle():
+def configure_freestyle(scene, view_layer):
     """启用 Freestyle，并设置为内描边和自定义颜色。"""
-    bpy.context.scene.render.use_freestyle = True
+    scene.render.use_freestyle = True
 
-    view_layer = bpy.context.scene.view_layers["ViewLayer"]
     if hasattr(view_layer, "use_freestyle"):
         view_layer.use_freestyle = True
 
@@ -152,6 +196,13 @@ def configure_freestyle():
         print("当前 Blender 版本不支持 Freestyle 内/外描边位置设置，已保留默认居中描边。")
 
 
+def disable_freestyle(scene, view_layer):
+    """关闭不需要的 Freestyle，避免关闭描边输出后仍额外渲染线条。"""
+    scene.render.use_freestyle = False
+    if hasattr(view_layer, "use_freestyle"):
+        view_layer.use_freestyle = False
+
+
 def first_available_output(node, names):
     """按候选名称取 Render Layers 输出口，兼容不同 Blender 版本的 socket 名称。"""
     for name in names:
@@ -159,6 +210,32 @@ def first_available_output(node, names):
         if socket is not None:
             return socket
     raise RuntimeError(f"Render Layers 节点找不到输出口：{names}")
+
+
+def extract_outline_from_combined_image(tree, render_layers, image_socket):
+    """从 Combined Image 提取线条 Alpha，并用纯色 RGB 避免白色边缘。"""
+    rgb_to_bw = tree.nodes.new(type="CompositorNodeRGBToBW")
+    invert = tree.nodes.new(type="CompositorNodeInvert")
+    try:
+        multiply_alpha = tree.nodes.new(type="CompositorNodeMath")
+    except RuntimeError:
+        # Blender 5.2 起合成器使用统一的 Shader Math 节点类型。
+        multiply_alpha = tree.nodes.new(type="ShaderNodeMath")
+    multiply_alpha.operation = "MULTIPLY"
+    set_alpha = tree.nodes.new(type="CompositorNodeSetAlpha")
+
+    tree.links.new(image_socket, rgb_to_bw.inputs["Image"])
+    tree.links.new(rgb_to_bw.outputs["Val"], invert.inputs["Color"])
+    tree.links.new(invert.outputs["Color"], multiply_alpha.inputs[0])
+    tree.links.new(
+        first_available_output(render_layers, ["Alpha"]),
+        multiply_alpha.inputs[1],
+    )
+    # 不复用 Combined Image 的灰度抗锯齿 RGB；否则半透明边缘会带白色。
+    # 输出像素始终使用描边色，只让 Alpha 从不透明平滑过渡到透明。
+    set_alpha.inputs["Image"].default_value = (*OUTLINE_COLOR, 1.0)
+    tree.links.new(multiply_alpha.outputs[0], set_alpha.inputs["Alpha"])
+    return set_alpha.outputs["Image"]
 
 
 def set_first_supported_enum(target, attribute, candidates):
@@ -232,110 +309,151 @@ set_first_supported_enum(
     ("Non-Color", "Raw", "scene_linear"),
 )
 
-# 设置渲染背景色。
+scene = bpy.context.scene
+main_view_layer = scene.view_layers["ViewLayer"]
+
+# World 仍参与照明；RGBA 输出启用时，背景固定输出为透明。
 bpy.data.worlds["World"].node_tree.nodes["Background"].inputs[0].default_value = WORLD_BACKGROUND_COLOR
 
 # 设置渲染引擎为 Cycles，以便使用节点和深度通道。
-bpy.context.scene.render.engine = "CYCLES"
-bpy.context.scene.render.film_transparent = OUTLINE_ONLY
+scene.render.engine = "CYCLES"
+scene.render.film_transparent = (
+    EXPORT_OUTLINE or EXPORT_MATERIAL or EXPORT_OBJECT_FILL
+)
 
-configure_freestyle()
+# 每次运行都先清除旧的主视图层材质覆盖，避免开关变化后残留上次配置。
+main_view_layer.material_override = None
+main_view_layer.use_pass_z = EXPORT_DEPTH
+if EXPORT_OUTLINE:
+    configure_freestyle(scene, main_view_layer)
+else:
+    disable_freestyle(scene, main_view_layer)
 
 camera = bpy.data.objects.get("Camera")
 configure_camera(camera)
-bpy.context.scene.camera = camera
+scene.camera = camera
 
 
 # =========================
-# 合成节点：深度图和描边图
+# 合成节点：按输出开关创建
 # =========================
 
-tree = get_compositor_tree(bpy.context.scene)
+tree = get_compositor_tree(scene)
 tree.nodes.clear()
-
-# 节点间距，仅用于把 Blender 节点排得更容易读。
-spacing = 50
-
-render_layers = tree.nodes.new(type="CompositorNodeRLayers")
-bpy.context.scene.view_layers["ViewLayer"].use_pass_z = True
-
-normalize_node = tree.nodes.new(type="CompositorNodeNormalize")
-color_invert_node = tree.nodes.new(type="CompositorNodeInvert")
-
-view_node = tree.nodes.new(type="CompositorNodeViewer")
-view_node2 = tree.nodes.new(type="CompositorNodeViewer")
-
-file_output = create_file_output(tree, DEPTH_OUTPUT_NAME, "BW")
-file_output2 = create_file_output(
-    tree,
-    OUTLINE_OUTPUT_NAME,
-    "RGBA" if OUTLINE_ONLY else "RGB",
-)
-
 links = tree.links
 
-# 深度图：Depth -> Normalize -> Invert，保持原有“近处更亮/更暗”的方向。
-links.new(first_available_output(render_layers, ["Depth", "Z"]), normalize_node.inputs[0])
-links.new(normalize_node.outputs[0], color_invert_node.inputs["Color"])
-links.new(color_invert_node.outputs[0], view_node.inputs["Image"])
-links.new(color_invert_node.outputs[0], file_output.inputs[0])
+# 深度图和描边图共用主视图层。
+if EXPORT_DEPTH or EXPORT_OUTLINE:
+    main_render_layers = tree.nodes.new(type="CompositorNodeRLayers")
+    main_render_layers.location = (0, 0)
 
-# 描边图：
-# OUTLINE_ONLY=True 时使用独立 Freestyle 通道，只输出边线和透明背景，不输出物体内容。
-# 如果当前 Blender 没有 Freestyle socket，则退回 Image 通道，并把填充覆盖为背景色。
-outline_socket = None
-if OUTLINE_ONLY:
-    outline_socket = render_layers.outputs.get("Freestyle")
+if EXPORT_DEPTH:
+    # Depth -> Normalize -> Invert。
+    normalize_node = tree.nodes.new(type="CompositorNodeNormalize")
+    invert_depth_node = tree.nodes.new(type="CompositorNodeInvert")
+    depth_viewer = tree.nodes.new(type="CompositorNodeViewer")
+    depth_file_output = create_file_output(tree, DEPTH_OUTPUT_NAME, "BW")
+
+    links.new(
+        first_available_output(main_render_layers, ["Depth", "Z"]),
+        normalize_node.inputs[0],
+    )
+    links.new(normalize_node.outputs[0], invert_depth_node.inputs["Color"])
+    links.new(invert_depth_node.outputs[0], depth_viewer.inputs["Image"])
+    links.new(invert_depth_node.outputs[0], depth_file_output.inputs[0])
+
+    normalize_node.location = (250, -300)
+    invert_depth_node.location = (450, -300)
+    depth_viewer.location = (650, -400)
+    depth_file_output.location = (650, -200)
+
+if EXPORT_OUTLINE:
+    # 优先使用独立 Freestyle pass；没有该输出口时，从 Combined Image 提取线条。
+    outline_socket = main_render_layers.outputs.get("Freestyle")
     if outline_socket is None:
-        print("Render Layers 没有 Freestyle 输出口，描边图将退回 Image 通道，并隐藏物体填充。")
+        print("Render Layers 没有 Freestyle 输出口，描边图将从 Image 通道提取。")
+        outline_socket = first_available_output(main_render_layers, ["Image"])
+        hidden_fill_mat = make_emission_material(
+            "DepthHiddenFillMaterial",
+            (1.0, 1.0, 1.0, 1.0),
+        )
+        main_view_layer.material_override = hidden_fill_mat
+        outline_socket = extract_outline_from_combined_image(
+            tree,
+            main_render_layers,
+            outline_socket,
+        )
 
-if outline_socket is None:
-    outline_socket = first_available_output(render_layers, ["Image"])
+    outline_viewer = tree.nodes.new(type="CompositorNodeViewer")
+    outline_file_output = create_file_output(tree, OUTLINE_OUTPUT_NAME, "RGBA")
+    links.new(outline_socket, outline_viewer.inputs["Image"])
+    links.new(outline_socket, outline_file_output.inputs[0])
 
-if OUTLINE_ONLY and outline_socket.name == "Image":
-    # Blender 3.2 等版本没有独立 Freestyle 合成输出。
-    # 退回 Image 通道时，把物体渲染成背景色，视觉上只留下 Freestyle 线条。
-    hidden_fill_mat = make_emission_material("DepthHiddenFillMaterial", WORLD_BACKGROUND_COLOR)
-    set_view_layer_material_override(hidden_fill_mat)
-    bpy.context.scene.render.film_transparent = False
-    file_output2.format.color_mode = "RGB"
-elif RENDER_OBJECT_FILL:
-    # 普通填充图模式：用可配置颜色覆盖视图层材质，不直接改物体材质。
-    fill_mat = make_emission_material("DepthFillEmissionMaterial", OBJECT_FILL_COLOR)
-    set_view_layer_material_override(fill_mat)
+    outline_viewer.location = (650, 100)
+    outline_file_output.location = (650, 300)
 
-links.new(outline_socket, view_node2.inputs["Image"])
-links.new(outline_socket, file_output2.inputs[0])
+# 原材质图始终使用独立视图层，避免 Freestyle 和白色材质覆盖混入结果。
+material_view_layer = scene.view_layers.get(MATERIAL_VIEW_LAYER_NAME)
+if EXPORT_MATERIAL:
+    material_view_layer = configure_output_view_layer(
+        scene,
+        main_view_layer,
+        MATERIAL_VIEW_LAYER_NAME,
+        None,
+    )
+    material_render_layers = tree.nodes.new(type="CompositorNodeRLayers")
+    material_render_layers.layer = material_view_layer.name
+    material_file_output = create_file_output(tree, MATERIAL_OUTPUT_NAME, "RGBA")
 
+    links.new(
+        first_available_output(material_render_layers, ["Image"]),
+        material_file_output.inputs[0],
+    )
 
-# =========================
-# 节点布局
-# =========================
+    material_render_layers.location = (0, 600)
+    material_file_output.location = (250, 600)
+elif material_view_layer is not None and hasattr(material_view_layer, "use"):
+    # 关闭输出后也关闭脚本创建的视图层，避免它继续消耗渲染时间。
+    material_view_layer.use = False
 
-normalize_node.location = (
-    render_layers.location.x + render_layers.width + spacing,
-    render_layers.location.y - 4 * normalize_node.height,
-)
-color_invert_node.location = (
-    normalize_node.location.x + normalize_node.width + spacing,
-    normalize_node.location.y,
-)
-view_node.location = (
-    color_invert_node.location.x + color_invert_node.width + spacing,
-    normalize_node.location.y,
-)
-file_output.location = (
-    view_node.location.x,
-    view_node.location.y + file_output.height + spacing,
-)
-view_node2.location = (
-    view_node.location.x,
-    file_output.location.y + view_node2.height + spacing,
-)
-file_output2.location = (
-    view_node.location.x,
-    view_node2.location.y + file_output2.height + spacing,
-)
+# 纯色填充图使用另一个独立视图层：固定 OBJECT_FILL_COLOR，无描边、透明背景。
+object_fill_view_layer = scene.view_layers.get(OBJECT_FILL_VIEW_LAYER_NAME)
+if EXPORT_OBJECT_FILL:
+    object_fill_material = make_emission_material(
+        "StereogramObjectFillMaterial",
+        OBJECT_FILL_COLOR,
+    )
+    object_fill_view_layer = configure_output_view_layer(
+        scene,
+        main_view_layer,
+        OBJECT_FILL_VIEW_LAYER_NAME,
+        object_fill_material,
+    )
+    object_fill_render_layers = tree.nodes.new(type="CompositorNodeRLayers")
+    object_fill_render_layers.layer = object_fill_view_layer.name
+    object_fill_file_output = create_file_output(
+        tree,
+        OBJECT_FILL_OUTPUT_NAME,
+        "RGBA",
+    )
+
+    links.new(
+        first_available_output(object_fill_render_layers, ["Image"]),
+        object_fill_file_output.inputs[0],
+    )
+
+    object_fill_render_layers.location = (0, 900)
+    object_fill_file_output.location = (250, 900)
+elif object_fill_view_layer is not None and hasattr(object_fill_view_layer, "use"):
+    object_fill_view_layer.use = False
+
+# 只渲染实际参与输出的视图层。
+if hasattr(main_view_layer, "use"):
+    main_view_layer.use = (
+        EXPORT_DEPTH
+        or EXPORT_OUTLINE
+        or not (EXPORT_MATERIAL or EXPORT_OBJECT_FILL)
+    )
 
 
 # =========================
